@@ -7,36 +7,83 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Loader2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
-const SYSTEM_PROMPT = `You are an AI coding assistant inside a lightweight browser-based code editor.
-The user has a virtual file system (HTML/CSS/JS files). You can answer questions and propose edits.
+const SYSTEM_PROMPT = `You are an AI coding assistant inside a browser-based code editor.
+The user has a virtual file system. You can answer questions and AUTOMATICALLY apply edits.
 
-When you want to CREATE or MODIFY a file, output a fenced code block whose info string is:
-\`\`\`<language> path=<filepath>
-...full new file contents...
+You have THREE edit operations. Use the SMALLEST one that does the job.
+NEVER rewrite an entire existing file just to change a few lines — use EDIT blocks.
+
+1) EDIT an existing file — surgical search/replace (PREFERRED for any change to existing files):
+\`\`\`edit path=<filepath>
+<<<<<<< SEARCH
+(exact existing code, including whitespace, must appear EXACTLY ONCE in the file)
+=======
+(new code that replaces it)
+>>>>>>> REPLACE
+\`\`\`
+You may include multiple SEARCH/REPLACE pairs in one edit block (repeat the markers).
+The SEARCH text must be small and unique — copy a few surrounding lines if needed.
+
+2) CREATE a new file (only when the file does not exist yet):
+\`\`\`create path=<filepath>
+<full file contents>
 \`\`\`
 
-Always output the FULL file content (no diffs, no ellipsis). Use forward-slash paths.
-You may include multiple such blocks. Add brief explanations outside the blocks.
-Do not invent files the user did not ask about unless clearly needed.`;
+3) DELETE a file:
+\`\`\`delete path=<filepath>
+\`\`\`
+
+Rules:
+- Use forward-slash paths.
+- Output edit blocks directly — they will be auto-applied. No confirmation needed.
+- Keep explanations brief and OUTSIDE the code blocks.
+- Touch only what the user asked about.`;
 
 interface ChatTurn {
   role: "user" | "assistant";
   content: string;
 }
 
-function extractFileBlocks(text: string): { path: string; content: string }[] {
-  const out: { path: string; content: string }[] = [];
+type Op =
+  | { kind: "edit"; path: string; pairs: { search: string; replace: string }[] }
+  | { kind: "create"; path: string; content: string }
+  | { kind: "delete"; path: string };
+
+function parseOps(text: string): Op[] {
+  const ops: Op[] = [];
   const re = /```([^\n`]*)\n([\s\S]*?)```/g;
   let m;
   while ((m = re.exec(text))) {
     const info = m[1].trim();
     const body = m[2];
     const pathMatch = info.match(/path\s*=\s*([^\s]+)/);
-    if (pathMatch) {
-      out.push({ path: pathMatch[1].replace(/^["']|["']$/g, ""), content: body });
+    if (!pathMatch) continue;
+    const path = pathMatch[1].replace(/^["']|["']$/g, "");
+
+    if (/^edit\b/i.test(info)) {
+      const pairs: { search: string; replace: string }[] = [];
+      const pairRe =
+        /<{5,}\s*SEARCH\s*\n([\s\S]*?)\n={5,}\s*\n([\s\S]*?)\n>{5,}\s*REPLACE/g;
+      let p;
+      while ((p = pairRe.exec(body))) {
+        pairs.push({ search: p[1], replace: p[2] });
+      }
+      if (pairs.length) ops.push({ kind: "edit", path, pairs });
+    } else if (/^delete\b/i.test(info)) {
+      ops.push({ kind: "delete", path });
+    } else if (/^create\b/i.test(info)) {
+      ops.push({ kind: "create", path, content: body });
     }
   }
-  return out;
+  return ops;
+}
+
+function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
+  const idx = content.indexOf(search);
+  if (idx === -1) return { ok: false, result: content };
+  // Ensure uniqueness
+  if (content.indexOf(search, idx + 1) !== -1) return { ok: false, result: content };
+  return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
 }
 
 export function Chat() {
@@ -81,11 +128,35 @@ export function Chat() {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
 
-      const blocks = extractFileBlocks(reply);
-      if (blocks.length) {
-        for (const b of blocks) upsertFile(b.path, b.content);
-        toast.success(`Updated ${blocks.length} file${blocks.length > 1 ? "s" : ""}`);
+      const ops = parseOps(reply);
+      const summary: string[] = [];
+      const failures: string[] = [];
+      const state = useStore.getState();
+      for (const op of ops) {
+        if (op.kind === "create") {
+          state.upsertFile(op.path, op.content);
+          summary.push(`+ ${op.path}`);
+        } else if (op.kind === "delete") {
+          state.deleteFile(op.path);
+          summary.push(`− ${op.path}`);
+        } else if (op.kind === "edit") {
+          const file = useStore.getState().files.find((f) => f.path === op.path);
+          if (!file) { failures.push(`edit ${op.path} (file not found)`); continue; }
+          let content = file.content;
+          let applied = 0;
+          for (const pair of op.pairs) {
+            const r = applyEdit(content, pair.search, pair.replace);
+            if (r.ok) { content = r.result; applied++; }
+            else failures.push(`edit ${op.path} (search not found / ambiguous)`);
+          }
+          if (applied) {
+            state.upsertFile(op.path, content);
+            summary.push(`~ ${op.path} (${applied} edit${applied > 1 ? "s" : ""})`);
+          }
+        }
       }
+      if (summary.length) toast.success(summary.join("  "));
+      if (failures.length) toast.error(failures.join("  "));
     } catch (e: any) {
       toast.error(e.message || "AI request failed");
       setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message}` }]);
