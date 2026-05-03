@@ -219,9 +219,10 @@ export function Chat() {
       }
       if (summary.length) toast.success(summary.join("  "));
       if (failures.length) toast.error(failures.join("  "));
-    } catch (e: any) {
-      toast.error(e.message || "AI request failed");
-      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message}` }]);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "AI request failed";
+      toast.error(message);
+      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${message}` }]);
     } finally {
       setBusy(false);
     }
