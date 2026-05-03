@@ -52,11 +52,17 @@ type Op =
 
 function extractEditPairs(body: string) {
   const pairs: { search: string; replace: string }[] = [];
-  // Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE with proper whitespace handling
-  const pairRe = /^<{7}\s*SEARCH\s*\n([\s\S]*?)\n^={7}\s*\n([\s\S]*?)\n^>{7}\s*REPLACE\s*$/gm;
-  let p;
-  while ((p = pairRe.exec(body))) {
-    pairs.push({ search: p[1], replace: p[2] });
+  // Match <<<<<<< ... ======= ... >>>>>>> with flexible content matching
+  // This handles markdown code blocks that may have extra formatting
+  const pairRe = /<{7}[^\n]*\n([\s\S]*?)\n={7}[^\n]*\n([\s\S]*?)\n>{7}[^\n]*/g;
+  let match;
+  while ((match = pairRe.exec(body))) {
+    const searchText = match[1].trim();
+    const replaceText = match[2].trim();
+    // Only add if search and replace are different (avoid no-op edits)
+    if (searchText && searchText !== replaceText) {
+      pairs.push({ search: searchText, replace: replaceText });
+    }
   }
   return pairs;
 }
