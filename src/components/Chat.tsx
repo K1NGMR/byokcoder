@@ -52,14 +52,15 @@ type Op =
 
 function extractEditPairs(body: string) {
   const pairs: { search: string; replace: string }[] = [];
-  // More lenient regex that doesn't require SEARCH/REPLACE labels
-  // Just match the markers and extract content between them
+  // Match the conflict markers more flexibly
+  // Capture everything between <<<<<<< and ======= and everything between ======= and >>>>>>>
   const pairRe = /<{7}[^\n]*\n([\s\S]*?)\n={7}[^\n]*\n([\s\S]*?)\n>{7}[^\n]*/g;
   let match;
   while ((match = pairRe.exec(body))) {
+    // Don't trim - preserve exact content
     const searchText = match[1];
     const replaceText = match[2];
-    // Only add if they are different
+    
     if (searchText !== replaceText) {
       pairs.push({ search: searchText, replace: replaceText });
     }
@@ -97,9 +98,8 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
       ? "delete"
       : /^create\b/i.test(info)
       ? "create"
-      : "replace"; // generic ```lang path=... -> full file replace
+      : "replace";
 
-    // Find matching closing fence: same marker char, length >= opening, with no info
     const closeRe = new RegExp(
       `^${indent}${marker[0]}{${marker.length},}\\s*$`
     );
@@ -140,38 +140,43 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
 function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
   if (!search) return { ok: false, result: content };
   
-  // Try exact match first
-  const idx = content.indexOf(search);
-  if (idx !== -1) {
-    // Check if it appears more than once
-    if (content.indexOf(search, idx + 1) === -1) {
-      return { 
-        ok: true, 
-        result: content.slice(0, idx) + replace + content.slice(idx + search.length) 
-      };
-    }
+  // Strategy 1: Try exact match
+  let idx = content.indexOf(search);
+  if (idx !== -1 && content.indexOf(search, idx + 1) === -1) {
+    return {
+      ok: true,
+      result: content.slice(0, idx) + replace + content.slice(idx + search.length)
+    };
   }
+
+  // Strategy 2: Normalize line endings and try again
+  // Replace CRLF with LF in both
+  const normalizeLineEndings = (s: string) => s.replace(/\r\n/g, "\n");
+  const contentNorm = normalizeLineEndings(content);
+  const searchNorm = normalizeLineEndings(search);
   
-  // Fallback: try with line-by-line whitespace normalization
-  const normalizeForMatch = (s: string) => s.split("\n").map(l => l.trimEnd()).join("\n");
-  const nContent = normalizeForMatch(content);
-  const nSearch = normalizeForMatch(search);
-  
-  const nIdx = nContent.indexOf(nSearch);
-  if (nIdx !== -1) {
-    // Verify it's unique in normalized version
-    if (nContent.indexOf(nSearch, nIdx + 1) === -1) {
-      // Find where this ends in original content by counting characters
-      // accounting for the structure
-      const beforeMatch = content.substring(0, nIdx);
-      const afterMatch = content.substring(nIdx + nSearch.length);
-      return { 
-        ok: true, 
-        result: beforeMatch + replace + afterMatch 
-      };
-    }
+  idx = contentNorm.indexOf(searchNorm);
+  if (idx !== -1 && contentNorm.indexOf(searchNorm, idx + 1) === -1) {
+    return {
+      ok: true,
+      result: contentNorm.slice(0, idx) + replace + contentNorm.slice(idx + searchNorm.length)
+    };
   }
+
+  // Strategy 3: Trim trailing whitespace on each line
+  const trimLines = (s: string) => 
+    s.split("\n").map(l => l.trimEnd()).join("\n");
+  const contentTrimmed = trimLines(content);
+  const searchTrimmed = trimLines(search);
   
+  idx = contentTrimmed.indexOf(searchTrimmed);
+  if (idx !== -1 && contentTrimmed.indexOf(searchTrimmed, idx + 1) === -1) {
+    return {
+      ok: true,
+      result: contentTrimmed.slice(0, idx) + replace + contentTrimmed.slice(idx + searchTrimmed.length)
+    };
+  }
+
   return { ok: false, result: content };
 }
 
@@ -219,23 +224,10 @@ export function Chat() {
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
 
       const ops = parseOps(reply, useStore.getState().files);
-      
-      // Log parsed operations for debugging
-      console.log("Parsed operations:", ops);
-      for (const op of ops) {
-        if (op.kind === "edit") {
-          console.log(`Edit ${op.path}:`, op.pairs.map(p => ({
-            searchLen: p.search.length,
-            replaceLen: p.replace.length,
-            searchPreview: p.search.substring(0, 50),
-            replacePreview: p.replace.substring(0, 50)
-          })));
-        }
-      }
-
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
+      
       for (const op of ops) {
         if (op.kind === "create") {
           state.upsertFile(op.path, op.content);
@@ -245,28 +237,31 @@ export function Chat() {
           summary.push(`− ${op.path}`);
         } else if (op.kind === "edit") {
           const file = useStore.getState().files.find((f) => f.path === op.path);
-          if (!file) { failures.push(`edit ${op.path} (file not found)`); continue; }
+          if (!file) { 
+            failures.push(`edit ${op.path} (file not found)`); 
+            continue; 
+          }
+          
           let content = file.content;
           let applied = 0;
+          
           for (const pair of op.pairs) {
             const r = applyEdit(content, pair.search, pair.replace);
             if (r.ok) { 
               content = r.result; 
               applied++; 
             } else {
-              console.log(`Failed to apply edit to ${op.path}`);
-              console.log("Search text length:", pair.search.length);
-              console.log("Search preview:", pair.search.substring(0, 100));
-              console.log("Content includes search?", content.includes(pair.search));
-              failures.push(`edit ${op.path} (search not found / ambiguous)`);
+              failures.push(`edit ${op.path} (search not found)`);
             }
           }
-          if (applied) {
+          
+          if (applied > 0) {
             state.upsertFile(op.path, content);
             summary.push(`~ ${op.path} (${applied} edit${applied > 1 ? "s" : ""})`);
           }
         }
       }
+      
       if (summary.length) toast.success(summary.join("  "));
       if (failures.length) toast.error(failures.join("  "));
     } catch (e: unknown) {
