@@ -51,16 +51,43 @@ type Op =
 
 function parseOps(text: string): Op[] {
   const ops: Op[] = [];
-  const re = /```([^\n`]*)\n([\s\S]*?)```/g;
-  let m;
-  while ((m = re.exec(text))) {
-    const info = m[1].trim();
-    const body = m[2];
-    const pathMatch = info.match(/path\s*=\s*([^\s]+)/);
-    if (!pathMatch) continue;
-    const path = pathMatch[1].replace(/^["']|["']$/g, "");
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
+    if (!fence) { i++; continue; }
+    const indent = fence[1];
+    const marker = fence[2];
+    const info = fence[3].trim();
+    const pathMatch = info.match(/path\s*=\s*["']?([^\s"']+)["']?/);
+    if (!pathMatch) { i++; continue; }
+    const path = pathMatch[1];
+    const kind = /^edit\b/i.test(info)
+      ? "edit"
+      : /^delete\b/i.test(info)
+      ? "delete"
+      : /^create\b/i.test(info)
+      ? "create"
+      : "replace"; // generic ```lang path=... -> full file replace
 
-    if (/^edit\b/i.test(info)) {
+    // Find matching closing fence: same marker char, length >= opening, with no info
+    const closeRe = new RegExp(
+      `^${indent}${marker[0]}{${marker.length},}\\s*$`
+    );
+    let j = i + 1;
+    const buf: string[] = [];
+    while (j < lines.length && !closeRe.test(lines[j])) {
+      buf.push(lines[j]);
+      j++;
+    }
+    const body = buf.join("\n");
+
+    if (kind === "delete") {
+      ops.push({ kind: "delete", path });
+    } else if (kind === "create" || kind === "replace") {
+      ops.push({ kind: "create", path, content: body });
+    } else {
       const pairs: { search: string; replace: string }[] = [];
       const pairRe =
         /<{5,}\s*SEARCH\s*\n([\s\S]*?)\n={5,}\s*\n([\s\S]*?)\n>{5,}\s*REPLACE/g;
@@ -69,22 +96,29 @@ function parseOps(text: string): Op[] {
         pairs.push({ search: p[1], replace: p[2] });
       }
       if (pairs.length) ops.push({ kind: "edit", path, pairs });
-    } else if (/^delete\b/i.test(info)) {
-      ops.push({ kind: "delete", path });
-    } else if (/^create\b/i.test(info)) {
-      ops.push({ kind: "create", path, content: body });
     }
+    i = j + 1;
   }
   return ops;
 }
 
 function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
-  const idx = content.indexOf(search);
-  if (idx === -1) return { ok: false, result: content };
-  // Ensure uniqueness
-  if (content.indexOf(search, idx + 1) !== -1) return { ok: false, result: content };
-  return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
+  // 1) exact match
+  let idx = content.indexOf(search);
+  if (idx !== -1 && content.indexOf(search, idx + 1) === -1) {
+    return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
+  }
+  // 2) trim trailing whitespace on each line for fuzzy match
+  const norm = (s: string) => s.split("\n").map((l) => l.replace(/\s+$/, "")).join("\n");
+  const nContent = norm(content);
+  const nSearch = norm(search);
+  idx = nContent.indexOf(nSearch);
+  if (idx !== -1 && nContent.indexOf(nSearch, idx + 1) === -1) {
+    return { ok: true, result: nContent.slice(0, idx) + replace + nContent.slice(idx + nSearch.length) };
+  }
+  return { ok: false, result: content };
 }
+
 
 export function Chat() {
   const { provider, model, apiKeys, files, upsertFile } = useStore();
