@@ -37,13 +37,18 @@ export function Preview() {
   const [tick, setTick] = useState(0);
   const lastUrl = useRef<string>("");
 
+  // Create a serialized version of files for dependency tracking
+  const filesKey = useMemo(() => {
+    return JSON.stringify(files.map(f => ({ path: f.path, content: f.content })));
+  }, [files]);
+
   const src = useMemo(() => {
     if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
     const url = buildPreviewSrc(files);
     lastUrl.current = url;
     return url;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, tick]);
+  }, [filesKey, tick]);
 
   useEffect(() => () => { if (lastUrl.current) URL.revokeObjectURL(lastUrl.current); }, []);
 
