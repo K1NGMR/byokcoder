@@ -103,12 +103,22 @@ function parseOps(text: string): Op[] {
 }
 
 function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
-  const idx = content.indexOf(search);
-  if (idx === -1) return { ok: false, result: content };
-  // Ensure uniqueness
-  if (content.indexOf(search, idx + 1) !== -1) return { ok: false, result: content };
-  return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
+  // 1) exact match
+  let idx = content.indexOf(search);
+  if (idx !== -1 && content.indexOf(search, idx + 1) === -1) {
+    return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
+  }
+  // 2) trim trailing whitespace on each line for fuzzy match
+  const norm = (s: string) => s.split("\n").map((l) => l.replace(/\s+$/, "")).join("\n");
+  const nContent = norm(content);
+  const nSearch = norm(search);
+  idx = nContent.indexOf(nSearch);
+  if (idx !== -1 && nContent.indexOf(nSearch, idx + 1) === -1) {
+    return { ok: true, result: nContent.slice(0, idx) + replace + nContent.slice(idx + nSearch.length) };
+  }
+  return { ok: false, result: content };
 }
+
 
 export function Chat() {
   const { provider, model, apiKeys, files, upsertFile } = useStore();
