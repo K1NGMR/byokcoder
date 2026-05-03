@@ -36,6 +36,7 @@ The SEARCH text must be small and unique — copy a few surrounding lines if nee
 Rules:
 - Use forward-slash paths.
 - Output edit blocks directly — they will be auto-applied. No confirmation needed.
+- Always include the SEARCH and REPLACE marker labels and a path. If you forget labels, raw conflict blocks will still be treated as edits when the old code is found uniquely.
 - Keep explanations brief and OUTSIDE the code blocks.
 - Touch only what the user asked about.`;
 
@@ -49,8 +50,28 @@ type Op =
   | { kind: "create"; path: string; content: string }
   | { kind: "delete"; path: string };
 
-function parseOps(text: string): Op[] {
+function extractEditPairs(body: string) {
+  const pairs: { search: string; replace: string }[] = [];
+  const pairRe = /<{5,}[^\n]*\n([\s\S]*?)\n={5,}[^\n]*\n([\s\S]*?)\n>{5,}[^\n]*/g;
+  let p;
+  while ((p = pairRe.exec(body))) {
+    pairs.push({ search: p[1], replace: p[2] });
+  }
+  return pairs;
+}
+
+function pairSignature(pair: { search: string; replace: string }) {
+  return `${pair.search}\u0000${pair.replace}`;
+}
+
+function inferEditPath(files: { path: string; content: string }[], search: string) {
+  const matches = files.filter((file) => applyEdit(file.content, search, search).ok);
+  return matches.length === 1 ? matches[0].path : null;
+}
+
+function parseOps(text: string, files: { path: string; content: string }[]): Op[] {
   const ops: Op[] = [];
+  const handledPairs = new Set<string>();
   const lines = text.split("\n");
   let i = 0;
   while (i < lines.length) {
@@ -88,17 +109,24 @@ function parseOps(text: string): Op[] {
     } else if (kind === "create" || kind === "replace") {
       ops.push({ kind: "create", path, content: body });
     } else {
-      const pairs: { search: string; replace: string }[] = [];
-      const pairRe =
-        /<{5,}\s*SEARCH\s*\n([\s\S]*?)\n={5,}\s*\n([\s\S]*?)\n>{5,}\s*REPLACE/g;
-      let p;
-      while ((p = pairRe.exec(body))) {
-        pairs.push({ search: p[1], replace: p[2] });
-      }
+      const pairs = extractEditPairs(body);
+      pairs.forEach((pair) => handledPairs.add(pairSignature(pair)));
       if (pairs.length) ops.push({ kind: "edit", path, pairs });
     }
     i = j + 1;
   }
+
+  const inferredByPath = new Map<string, { search: string; replace: string }[]>();
+  for (const pair of extractEditPairs(text)) {
+    if (handledPairs.has(pairSignature(pair))) continue;
+    const path = inferEditPath(files, pair.search);
+    if (!path) continue;
+    const pairs = inferredByPath.get(path) ?? [];
+    pairs.push(pair);
+    inferredByPath.set(path, pairs);
+  }
+  inferredByPath.forEach((pairs, path) => ops.push({ kind: "edit", path, pairs }));
+
   return ops;
 }
 
@@ -162,7 +190,7 @@ export function Chat() {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
 
-      const ops = parseOps(reply);
+      const ops = parseOps(reply, useStore.getState().files);
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
