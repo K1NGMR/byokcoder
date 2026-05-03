@@ -52,8 +52,9 @@ type Op =
 
 function extractEditPairs(body: string) {
   const pairs: { search: string; replace: string }[] = [];
-  // Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE with proper markers
-  const pairRe = /<{7}\s*SEARCH\s*\n([\s\S]*?)\n={7}\s*\n([\s\S]*?)\n>{7}\s*REPLACE/g;
+  // More lenient regex that doesn't require SEARCH/REPLACE labels
+  // Just match the markers and extract content between them
+  const pairRe = /<{7}[^\n]*\n([\s\S]*?)\n={7}[^\n]*\n([\s\S]*?)\n>{7}[^\n]*/g;
   let match;
   while ((match = pairRe.exec(body))) {
     const searchText = match[1];
@@ -137,22 +138,37 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
 }
 
 function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
-  // Normalize both strings for comparison (trim each line)
-  const normalize = (s: string) => 
-    s.split("\n").map((l) => l.trimEnd()).join("\n");
-  
-  const normalizedContent = normalize(content);
-  const normalizedSearch = normalize(search);
+  if (!search) return { ok: false, result: content };
   
   // Try exact match first
-  let idx = normalizedContent.indexOf(normalizedSearch);
+  const idx = content.indexOf(search);
   if (idx !== -1) {
-    // Verify it's unique
-    if (normalizedContent.indexOf(normalizedSearch, idx + 1) === -1) {
-      // Replace in original content using normalized indices
-      const before = content.substring(0, idx);
-      const after = content.substring(idx + normalizedSearch.length);
-      return { ok: true, result: before + replace + after };
+    // Check if it appears more than once
+    if (content.indexOf(search, idx + 1) === -1) {
+      return { 
+        ok: true, 
+        result: content.slice(0, idx) + replace + content.slice(idx + search.length) 
+      };
+    }
+  }
+  
+  // Fallback: try with line-by-line whitespace normalization
+  const normalizeForMatch = (s: string) => s.split("\n").map(l => l.trimEnd()).join("\n");
+  const nContent = normalizeForMatch(content);
+  const nSearch = normalizeForMatch(search);
+  
+  const nIdx = nContent.indexOf(nSearch);
+  if (nIdx !== -1) {
+    // Verify it's unique in normalized version
+    if (nContent.indexOf(nSearch, nIdx + 1) === -1) {
+      // Find where this ends in original content by counting characters
+      // accounting for the structure
+      const beforeMatch = content.substring(0, nIdx);
+      const afterMatch = content.substring(nIdx + nSearch.length);
+      return { 
+        ok: true, 
+        result: beforeMatch + replace + afterMatch 
+      };
     }
   }
   
@@ -203,6 +219,20 @@ export function Chat() {
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
 
       const ops = parseOps(reply, useStore.getState().files);
+      
+      // Log parsed operations for debugging
+      console.log("Parsed operations:", ops);
+      for (const op of ops) {
+        if (op.kind === "edit") {
+          console.log(`Edit ${op.path}:`, op.pairs.map(p => ({
+            searchLen: p.search.length,
+            replaceLen: p.replace.length,
+            searchPreview: p.search.substring(0, 50),
+            replacePreview: p.replace.substring(0, 50)
+          })));
+        }
+      }
+
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
@@ -220,8 +250,16 @@ export function Chat() {
           let applied = 0;
           for (const pair of op.pairs) {
             const r = applyEdit(content, pair.search, pair.replace);
-            if (r.ok) { content = r.result; applied++; }
-            else failures.push(`edit ${op.path} (search not found / ambiguous)`);
+            if (r.ok) { 
+              content = r.result; 
+              applied++; 
+            } else {
+              console.log(`Failed to apply edit to ${op.path}`);
+              console.log("Search text length:", pair.search.length);
+              console.log("Search preview:", pair.search.substring(0, 100));
+              console.log("Content includes search?", content.includes(pair.search));
+              failures.push(`edit ${op.path} (search not found / ambiguous)`);
+            }
           }
           if (applied) {
             state.upsertFile(op.path, content);
