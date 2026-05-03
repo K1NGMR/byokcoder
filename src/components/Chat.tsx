@@ -52,11 +52,16 @@ type Op =
 
 function extractEditPairs(body: string) {
   const pairs: { search: string; replace: string }[] = [];
-  // Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE with proper whitespace handling
-  const pairRe = /^<{7}\s*SEARCH\s*\n([\s\S]*?)\n^={7}\s*\n([\s\S]*?)\n^>{7}\s*REPLACE\s*$/gm;
-  let p;
-  while ((p = pairRe.exec(body))) {
-    pairs.push({ search: p[1], replace: p[2] });
+  // Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE with proper markers
+  const pairRe = /<{7}\s*SEARCH\s*\n([\s\S]*?)\n={7}\s*\n([\s\S]*?)\n>{7}\s*REPLACE/g;
+  let match;
+  while ((match = pairRe.exec(body))) {
+    const searchText = match[1];
+    const replaceText = match[2];
+    // Only add if they are different
+    if (searchText !== replaceText) {
+      pairs.push({ search: searchText, replace: replaceText });
+    }
   }
   return pairs;
 }
@@ -132,19 +137,25 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
 }
 
 function applyEdit(content: string, search: string, replace: string): { ok: boolean; result: string } {
-  // 1) exact match
-  let idx = content.indexOf(search);
-  if (idx !== -1 && content.indexOf(search, idx + 1) === -1) {
-    return { ok: true, result: content.slice(0, idx) + replace + content.slice(idx + search.length) };
+  // Normalize both strings for comparison (trim each line)
+  const normalize = (s: string) => 
+    s.split("\n").map((l) => l.trimEnd()).join("\n");
+  
+  const normalizedContent = normalize(content);
+  const normalizedSearch = normalize(search);
+  
+  // Try exact match first
+  let idx = normalizedContent.indexOf(normalizedSearch);
+  if (idx !== -1) {
+    // Verify it's unique
+    if (normalizedContent.indexOf(normalizedSearch, idx + 1) === -1) {
+      // Replace in original content using normalized indices
+      const before = content.substring(0, idx);
+      const after = content.substring(idx + normalizedSearch.length);
+      return { ok: true, result: before + replace + after };
+    }
   }
-  // 2) trim trailing whitespace on each line for fuzzy match
-  const norm = (s: string) => s.split("\n").map((l) => l.replace(/\s+$/, "")).join("\n");
-  const nContent = norm(content);
-  const nSearch = norm(search);
-  idx = nContent.indexOf(nSearch);
-  if (idx !== -1 && nContent.indexOf(nSearch, idx + 1) === -1) {
-    return { ok: true, result: nContent.slice(0, idx) + replace + nContent.slice(idx + nSearch.length) };
-  }
+  
   return { ok: false, result: content };
 }
 
