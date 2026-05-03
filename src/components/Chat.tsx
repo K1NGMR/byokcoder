@@ -52,7 +52,8 @@ type Op =
 
 function extractEditPairs(body: string) {
   const pairs: { search: string; replace: string }[] = [];
-  const pairRe = /<{5,}[^\n]*\n([\s\S]*?)\n={5,}[^\n]*\n([\s\S]*?)\n>{5,}[^\n]*/g;
+  // Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE with proper whitespace handling
+  const pairRe = /^<{7}\s*SEARCH\s*\n([\s\S]*?)\n^={7}\s*\n([\s\S]*?)\n^>{7}\s*REPLACE\s*$/gm;
   let p;
   while ((p = pairRe.exec(body))) {
     pairs.push({ search: p[1], replace: p[2] });
