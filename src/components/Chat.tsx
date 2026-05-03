@@ -128,11 +128,35 @@ export function Chat() {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
 
-      const blocks = extractFileBlocks(reply);
-      if (blocks.length) {
-        for (const b of blocks) upsertFile(b.path, b.content);
-        toast.success(`Updated ${blocks.length} file${blocks.length > 1 ? "s" : ""}`);
+      const ops = parseOps(reply);
+      const summary: string[] = [];
+      const failures: string[] = [];
+      const state = useStore.getState();
+      for (const op of ops) {
+        if (op.kind === "create") {
+          state.upsertFile(op.path, op.content);
+          summary.push(`+ ${op.path}`);
+        } else if (op.kind === "delete") {
+          state.deleteFile(op.path);
+          summary.push(`− ${op.path}`);
+        } else if (op.kind === "edit") {
+          const file = useStore.getState().files.find((f) => f.path === op.path);
+          if (!file) { failures.push(`edit ${op.path} (file not found)`); continue; }
+          let content = file.content;
+          let applied = 0;
+          for (const pair of op.pairs) {
+            const r = applyEdit(content, pair.search, pair.replace);
+            if (r.ok) { content = r.result; applied++; }
+            else failures.push(`edit ${op.path} (search not found / ambiguous)`);
+          }
+          if (applied) {
+            state.upsertFile(op.path, content);
+            summary.push(`~ ${op.path} (${applied} edit${applied > 1 ? "s" : ""})`);
+          }
+        }
       }
+      if (summary.length) toast.success(summary.join("  "));
+      if (failures.length) toast.error(failures.join("  "));
     } catch (e: any) {
       toast.error(e.message || "AI request failed");
       setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message}` }]);
