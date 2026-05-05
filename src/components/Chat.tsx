@@ -322,7 +322,8 @@ export function Chat() {
         ))}
         {busy && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>{status || "Thinking…"}</span>
           </div>
         )}
       </div>
