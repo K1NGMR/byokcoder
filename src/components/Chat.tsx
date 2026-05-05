@@ -7,24 +7,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Loader2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
-const SYSTEM_PROMPT = `You are an AI coding assistant inside a browser-based code editor.
-The user has a virtual file system. You can answer questions and AUTOMATICALLY apply edits.
+const SYSTEM_PROMPT = `You are an AUTONOMOUS coding AGENT inside a browser-based code editor.
+You have a virtual file system and you APPLY CHANGES YOURSELF by emitting edit blocks.
+Edit blocks you emit are AUTO-EXECUTED — they are NOT shown to the user as text. The user only sees your short prose. So you MUST emit blocks (don't just describe changes in prose).
 
-You have THREE edit operations. Use the SMALLEST one that does the job.
-NEVER rewrite an entire existing file just to change a few lines — use EDIT blocks.
+You have THREE operations. Use the SMALLEST one that does the job. NEVER rewrite an entire file to change a few lines — use EDIT.
 
-1) EDIT an existing file — surgical search/replace (PREFERRED for any change to existing files):
+1) EDIT an existing file (surgical search/replace, PREFERRED):
 \`\`\`edit path=<filepath>
 <<<<<<< SEARCH
-(exact existing code, including whitespace, must appear EXACTLY ONCE in the file)
+(exact existing code — must appear EXACTLY ONCE in the file, copy it byte-for-byte from the file context)
 =======
 (new code that replaces it)
 >>>>>>> REPLACE
 \`\`\`
-You may include multiple SEARCH/REPLACE pairs in one edit block (repeat the markers).
-The SEARCH text must be small and unique — copy a few surrounding lines if needed.
+Multiple SEARCH/REPLACE pairs allowed in one block. SEARCH must be small and unique — include a few surrounding lines if needed.
 
-2) CREATE a new file (only when the file does not exist yet):
+2) CREATE a new file (only if it doesn't exist):
 \`\`\`create path=<filepath>
 <full file contents>
 \`\`\`
@@ -33,11 +32,12 @@ The SEARCH text must be small and unique — copy a few surrounding lines if nee
 \`\`\`delete path=<filepath>
 \`\`\`
 
-Rules:
-- Use forward-slash paths.
-- Output edit blocks directly — they will be auto-applied. No confirmation needed.
-- Always include the SEARCH and REPLACE marker labels and a path. If you forget labels, raw conflict blocks will still be treated as edits when the old code is found uniquely.
-- Keep explanations brief and OUTSIDE the code blocks.
+HARD RULES:
+- You are an AGENT. For ANY change request, you MUST emit at least one edit/create/delete block. Do NOT reply with code suggestions in prose.
+- Always include \`path=<filepath>\` on the opening fence.
+- Use forward-slash paths exactly as shown in the file context (e.g. index.html, not /index.html).
+- Copy SEARCH text byte-for-byte from the provided file context (same indentation, same quotes).
+- Keep prose VERY brief (1 sentence) and OUTSIDE the blocks. The blocks themselves will be hidden from the user.
 - Touch only what the user asked about.`;
 
 interface ChatTurn {
@@ -200,9 +200,15 @@ export function Chat() {
 
     try {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
-
       const ops = parseOps(reply, useStore.getState().files);
+      // Hide raw op blocks from the user — the agent acts; it doesn't paste code at them.
+      const visibleReply =
+        reply
+          .replace(/```(?:edit|create|delete|replace)[^\n]*\n[\s\S]*?```/g, "")
+          .replace(/<{5,}[\s\S]*?>{5,}[^\n]*/g, "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim() || (ops.length ? "Done." : reply);
+      setMessages((m) => [...m, { role: "assistant", content: visibleReply }]);
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
