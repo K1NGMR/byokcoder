@@ -90,7 +90,7 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
     const info = fence[3].trim();
     const pathMatch = info.match(/path\s*=\s*["']?([^\s"']+)["']?/);
     if (!pathMatch) { i++; continue; }
-    const path = pathMatch[1];
+    const path = normalizePath(pathMatch[1], files);
     const kind = /^edit\b/i.test(info)
       ? "edit"
       : /^delete\b/i.test(info)
