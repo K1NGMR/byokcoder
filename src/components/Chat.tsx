@@ -24,7 +24,7 @@ OPERATIONS — pick the smallest that fits the job. You may emit as MANY blocks 
 \`\`\`
 Multiple SEARCH/REPLACE pairs allowed in one block. SEARCH must be unique — include surrounding lines if needed.
 
-2) CREATE a new file, OR fully REPLACE an existing file when the rewrite is large/structural (use this for "rework", "redo", "rebuild", "convert", or when >50% of the file changes):
+2) CREATE a new file OR fully REPLACE an existing one (use for "rework"/"rebuild"/major changes). To overwrite an existing file you MUST use its EXACT existing path (e.g. \`path=index.html\`). NEVER invent a new filename like \`index-new.html\`, \`reworked.html\`, or \`index2.html\` — that creates a duplicate the preview won't use. Same path = overwrite.
 \`\`\`create path=<filepath>
 <full file contents>
 \`\`\`
