@@ -10,14 +10,16 @@ export function FileManager() {
   const [tmpName, setTmpName] = useState("");
 
   const newFile = () => {
-    const base = "untitled";
-    let i = 1;
-    let name = `${base}.txt`;
-    while (files.find((f) => f.path === name)) {
-      name = `${base}-${i++}.txt`;
+    const name = prompt("New file name (e.g. about.html, utils.js, theme.css):", "newfile.html");
+    if (!name) return;
+    const clean = name.trim().replace(/^\/+/, "");
+    if (!clean) return;
+    if (files.find((f) => f.path === clean)) {
+      setActive(clean);
+      return;
     }
-    upsertFile(name, "");
-    setActive(name);
+    upsertFile(clean, "");
+    setActive(clean);
   };
 
   return (
