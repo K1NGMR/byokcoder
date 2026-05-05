@@ -173,16 +173,24 @@ function applyEdit(content: string, search: string, replace: string): { ok: bool
 }
 
 
+const STATUS_STEPS = [
+  "Looking through current project…",
+  "Planning the changes…",
+  "Writing code…",
+  "Applying edits…",
+];
+
 export function Chat() {
-  const { provider, model, apiKeys, files, upsertFile } = useStore();
+  const { provider, model, apiKeys, files } = useStore();
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, busy]);
+  }, [messages, busy, status]);
 
   const send = async () => {
     const key = apiKeys[provider];
@@ -196,6 +204,13 @@ export function Chat() {
     setMessages((m) => [...m, userMsg]);
     setInput("");
     setBusy(true);
+    setStatus(STATUS_STEPS[0]);
+
+    let stepIdx = 0;
+    const statusTimer = setInterval(() => {
+      stepIdx = Math.min(stepIdx + 1, STATUS_STEPS.length - 1);
+      setStatus(STATUS_STEPS[stepIdx]);
+    }, 1400);
 
     const fileContext = files
       .map((f) => `--- ${f.path} ---\n${f.content}`)
@@ -213,15 +228,17 @@ export function Chat() {
 
     try {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
+      setStatus("Applying edits…");
       const ops = parseOps(reply, useStore.getState().files);
-      // Hide raw op blocks from the user — the agent acts; it doesn't paste code at them.
-      const visibleReply =
-        reply
-          .replace(/```(?:edit|create|delete|replace)[^\n]*\n[\s\S]*?```/g, "")
-          .replace(/<{5,}[\s\S]*?>{5,}[^\n]*/g, "")
-          .replace(/\n{3,}/g, "\n\n")
-          .trim() || (ops.length ? "Done." : reply);
-      setMessages((m) => [...m, { role: "assistant", content: visibleReply }]);
+
+      // Strip ALL fenced code blocks + conflict markers so the AI never pastes code in chat
+      let visibleReply = reply
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/~~~[\s\S]*?~~~/g, "")
+        .replace(/<{5,}[\s\S]*?>{5,}[^\n]*/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
@@ -248,6 +265,13 @@ export function Chat() {
           }
         }
       }
+
+      if (!visibleReply) {
+        visibleReply = ops.length
+          ? `✅ Done — ${summary.join(", ") || "no changes applied"}`
+          : "Okay.";
+      }
+      setMessages((m) => [...m, { role: "assistant", content: visibleReply }]);
       if (summary.length) toast.success(summary.join("  "));
       if (failures.length) toast.error(failures.join("  "));
     } catch (e: unknown) {
@@ -255,6 +279,8 @@ export function Chat() {
       toast.error(message);
       setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${message}` }]);
     } finally {
+      clearInterval(statusTimer);
+      setStatus("");
       setBusy(false);
     }
   };
