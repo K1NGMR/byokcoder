@@ -34,12 +34,13 @@ Multiple SEARCH/REPLACE pairs allowed in one block. SEARCH must be unique — in
 \`\`\`
 
 HARD RULES:
-- You are an AGENT. For ANY change request, emit at least one operation block. Never reply with code in prose.
+- You are an AGENT. For ANY change request, emit at least one operation block. NEVER paste code in prose — ALL code MUST go inside \`\`\`edit / \`\`\`create / \`\`\`delete blocks. Any code outside these blocks will be STRIPPED before the user sees your message.
+- You can freely modify ANY file (index.html, script.js, styles.css, or any other) and create new files of any type (.html, .css, .js, .json, .svg, .md, etc.).
 - Always include \`path=<filepath>\` on the opening fence. Use forward-slash paths exactly as in the file context.
-- For "rework"/"rebuild"/major changes: feel free to fully replace files with \`create\`, add new files (extra .html, .css, .js, assets), and delete obsolete ones — all in the same reply.
+- For "rework"/"rebuild"/major changes: fully replace files with \`create\`, add new files, and delete obsolete ones — all in the same reply.
 - For small tweaks: prefer \`edit\` blocks; copy SEARCH text byte-for-byte from the file context.
-- External libs are fine via CDN (e.g. <script src="https://cdn.jsdelivr.net/...">).
-- Keep prose to 1 short sentence OUTSIDE the blocks (the blocks are hidden).`;
+- External libs via CDN are fine (e.g. <script src="https://cdn.jsdelivr.net/...">).
+- Your prose reply must be 1 short sentence describing what you did — no code, no markdown code fences.`;
 
 interface ChatTurn {
   role: "user" | "assistant";
