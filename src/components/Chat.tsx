@@ -200,9 +200,15 @@ export function Chat() {
 
     try {
       const reply = await callAI({ provider, model, apiKey: key, messages: aiMessages });
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
-
       const ops = parseOps(reply, useStore.getState().files);
+      // Hide raw op blocks from the user — the agent acts; it doesn't paste code at them.
+      const visibleReply =
+        reply
+          .replace(/```(?:edit|create|delete|replace)[^\n]*\n[\s\S]*?```/g, "")
+          .replace(/<{5,}[\s\S]*?>{5,}[^\n]*/g, "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim() || (ops.length ? "Done." : reply);
+      setMessages((m) => [...m, { role: "assistant", content: visibleReply }]);
       const summary: string[] = [];
       const failures: string[] = [];
       const state = useStore.getState();
