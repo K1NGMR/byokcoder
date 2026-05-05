@@ -24,7 +24,7 @@ OPERATIONS — pick the smallest that fits the job. You may emit as MANY blocks 
 \`\`\`
 Multiple SEARCH/REPLACE pairs allowed in one block. SEARCH must be unique — include surrounding lines if needed.
 
-2) CREATE a new file, OR fully REPLACE an existing file when the rewrite is large/structural (use this for "rework", "redo", "rebuild", "convert", or when >50% of the file changes):
+2) CREATE a new file OR fully REPLACE an existing one (use for "rework"/"rebuild"/major changes). To overwrite an existing file you MUST use its EXACT existing path (e.g. \`path=index.html\`). NEVER invent a new filename like \`index-new.html\`, \`reworked.html\`, or \`index2.html\` — that creates a duplicate the preview won't use. Same path = overwrite.
 \`\`\`create path=<filepath>
 <full file contents>
 \`\`\`
@@ -76,6 +76,18 @@ function inferEditPath(files: { path: string; content: string }[], search: strin
   return matches.length === 1 ? matches[0].path : null;
 }
 
+function normalizePath(p: string, files: { path: string; content: string }[]) {
+  let n = p.trim().replace(/^\.?\//, "").replace(/^\/+/, "");
+  const exact = files.find((f) => f.path === n);
+  if (exact) return exact.path;
+  const ci = files.find((f) => f.path.toLowerCase() === n.toLowerCase());
+  if (ci) return ci.path;
+  const base = n.split("/").pop()!.toLowerCase();
+  const byBase = files.filter((f) => f.path.split("/").pop()!.toLowerCase() === base);
+  if (byBase.length === 1) return byBase[0].path;
+  return n;
+}
+
 function parseOps(text: string, files: { path: string; content: string }[]): Op[] {
   const ops: Op[] = [];
   const handledPairs = new Set<string>();
@@ -90,7 +102,7 @@ function parseOps(text: string, files: { path: string; content: string }[]): Op[
     const info = fence[3].trim();
     const pathMatch = info.match(/path\s*=\s*["']?([^\s"']+)["']?/);
     if (!pathMatch) { i++; continue; }
-    const path = pathMatch[1];
+    const path = normalizePath(pathMatch[1], files);
     const kind = /^edit\b/i.test(info)
       ? "edit"
       : /^delete\b/i.test(info)
