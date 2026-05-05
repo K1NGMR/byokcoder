@@ -76,6 +76,18 @@ function inferEditPath(files: { path: string; content: string }[], search: strin
   return matches.length === 1 ? matches[0].path : null;
 }
 
+function normalizePath(p: string, files: { path: string; content: string }[]) {
+  let n = p.trim().replace(/^\.?\//, "").replace(/^\/+/, "");
+  const exact = files.find((f) => f.path === n);
+  if (exact) return exact.path;
+  const ci = files.find((f) => f.path.toLowerCase() === n.toLowerCase());
+  if (ci) return ci.path;
+  const base = n.split("/").pop()!.toLowerCase();
+  const byBase = files.filter((f) => f.path.split("/").pop()!.toLowerCase() === base);
+  if (byBase.length === 1) return byBase[0].path;
+  return n;
+}
+
 function parseOps(text: string, files: { path: string; content: string }[]): Op[] {
   const ops: Op[] = [];
   const handledPairs = new Set<string>();
